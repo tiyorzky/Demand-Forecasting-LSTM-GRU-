@@ -1,0 +1,192 @@
+#Import Library EDA
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import seaborn as sns
+from google.colab import files
+
+#Memuat Dataset Permintaan Keripik Buah
+dataset_keripik = "/content/Data Keripik Buah Bulanan Multivariat.csv"
+df = pd.read_csv(dataset_keripik)
+
+#Visualisasi Dataset
+plt.figure(figsize=(10,5))
+plt.plot(df.index, df['KeripikNangka(kg)'], linestyle='-', color='orange', label="Keripik Nangka (kg)")
+plt.plot(df.index, df['KeripikSalak(kg)'], linestyle='-', color='blue', label="Keripik Salak (kg)")
+plt.plot(df.index, df['KeripikApel(kg)'], linestyle='-', color='green', label="Keripik Apel (kg)")
+
+# Menampilkan label bulan dengan jarak agar tidak terlalu padat
+plt.xticks(np.arange(0, len(df), step=4), df['Bulan'][::4], rotation=45, fontsize=9)
+
+# Menambahkan label dan judul
+plt.xlabel("Bulan")
+plt.ylabel("Jumlah Permintaan (Kg)")
+plt.title("Grafik Permintaan Keripik Buah (Mei 2020-Desember 2024)")
+
+# Menampilkan legenda
+plt.legend()
+
+# Menampilkan grafik
+plt.show()
+
+#Menampilkan Informasi dan Statistik Deskriptif dari Dataset
+print("\n\033[1m Informasi Dataset:\033[0m")
+print(df.info())
+
+print("\n\033[1m Statistik Deskriptif:\033[0m")
+print(df.describe().round(3))
+
+print("\n\033[1m Jumlah Nilai Kosong dalam Dataset:\033[0m")
+print(df.isnull().sum())
+
+plt.figure(figsize=(15, 5))
+
+# Boxplot Dataset Permintaan Keripik Nangka
+plt.subplot(1, 3, 1)
+sns.boxplot(y=df['KeripikNangka(kg)'], color='orange')
+plt.title('Boxplot Outlier Permintaan Keripik Nangka (Kg)')
+
+# Boxplot Dataset Permintaan Keripik Salak
+plt.subplot(1, 3, 2)
+sns.boxplot(y=df['KeripikSalak(kg)'], color='blue')
+plt.title('Boxplot Outlier Permintaan Keripik Salak (Kg)')
+
+# Boxplot Dataset Permintaan Keripik Apel
+plt.subplot(1, 3, 3)
+sns.boxplot(y=df['KeripikApel(kg)'], color='green')
+plt.title('Boxplot Outlier Permintaan Keripik Apel (Kg)')
+
+plt.tight_layout()
+plt.show()
+
+# Daftar kolom yang akan dianalisis
+columns = ['KeripikNangka(kg)', 'KeripikSalak(kg)', 'KeripikApel(kg)']
+
+# Daftar warna untuk tiap grafik
+colors = ['orange', 'blue', 'green']
+
+# Loop untuk setiap kolom
+for i, col in enumerate(columns):
+    # Hitung IQR untuk kolom saat ini
+    Q1 = np.percentile(df[col], 25)
+    Q3 = np.percentile(df[col], 75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+
+    # Menentukan outlier
+    outliers = df[(df[col] < lower_bound) | (df[col] > upper_bound)]
+
+    # Buat plot
+    plt.figure(figsize=(12, 6))
+
+    # Plot data utama dengan garis biru
+    plt.plot(df.index, df[col], label='Data', color=colors[i], linewidth=1.5)
+
+    # Tambahkan garis batas atas dan bawah
+    plt.axhline(y=upper_bound, color='green', linestyle='--', label='Upper Bound')
+    plt.axhline(y=lower_bound, color='green', linestyle='--', label='Lower Bound')
+
+    # Tandai outlier dengan titik merah
+    plt.scatter(outliers.index.to_numpy(), outliers[col], color='red', s=50, label='Outliers')
+
+    # Menampilkan informasi outlier di terminal
+    print(f"\n📌 **Data Outlier dalam Kolom {col}:**")
+    print(outliers)
+    print(f"🔢 Jumlah Outlier: {len(outliers)} data\n")
+
+    # Label dan judul plot
+    plt.xlabel('Bulan')
+
+    # Menampilkan label bulan dengan jarak agar tidak terlalu padat
+    plt.xticks(np.arange(0, len(df), step=4), df['Bulan'][::4], rotation=45, fontsize=9)
+
+    plt.ylabel(col)
+    plt.title(f'Line Plot Outlier - {col}')
+    plt.legend()
+    plt.show()
+
+
+# Daftar kolom yang akan diproses
+columns = ['KeripikNangka(kg)', 'KeripikSalak(kg)', 'KeripikApel(kg)']
+
+# Loop untuk setiap kolom
+for col in columns:
+    # Hitung IQR untuk kolom saat ini
+    Q1 = np.percentile(df[col], 25)
+    Q3 = np.percentile(df[col], 75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+
+    # Menentukan nilai maksimum & minimum dalam batas normal (tanpa outlier)
+    max_value = df[col][(df[col] >= lower_bound) & (df[col] <= upper_bound)].max()
+    min_value = df[col][(df[col] >= lower_bound) & (df[col] <= upper_bound)].min()
+
+    # Menangani outlier dengan mengganti nilai outlier dengan max_value
+    df.loc[(df[col] < lower_bound) | (df[col] > upper_bound), col] = max_value
+
+
+# Daftar kolom yang akan divisualisasikan
+columns = ['KeripikNangka(kg)', 'KeripikSalak(kg)', 'KeripikApel(kg)']
+
+# Daftar warna untuk tiap grafik
+colors = ['orange', 'blue', 'green']
+
+# Loop untuk setiap kolom
+for i, col in enumerate(columns):
+    plt.figure(figsize=(10, 5))
+
+    # Plot garis setelah penanganan outlier
+    sns.lineplot(x=df['Bulan'], y=df[col], linestyle='-', color=colors[i])
+
+    # Judul & label sumbu
+    plt.title(f'Data Permintaan {col} Setelah Penanganan')
+    plt.xlabel('Bulan')
+    plt.ylabel(col)
+
+    # Menampilkan label bulan dengan jarak agar tidak terlalu padat
+    plt.xticks(np.arange(0, len(df), step=4), df['Bulan'][::4], rotation=45, fontsize=9)
+
+    # Menampilkan plot
+    plt.show()
+
+    # Cek jumlah nilai 0 & outlier setelah perbaikan untuk kolom saat ini
+    num_zeros = (df[col] == 0).sum()
+
+    # Hitung ulang batas outlier
+    Q1 = np.percentile(df[col], 25)
+    Q3 = np.percentile(df[col], 75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+    num_outliers = ((df[col] < lower_bound) | (df[col] > upper_bound)).sum()
+
+    # Cetak hasil setelah penanganan
+    print(f'\n✅ Jumlah data bernilai 0 setelah perbaikan di kolom {col}: {num_zeros}')
+    print(f'✅ Jumlah outlier setelah perbaikan di kolom {col}: {num_outliers}')
+
+
+#Analisis Korelasi
+numerical_df = df.select_dtypes(include=np.number)
+correlation_matrix = numerical_df.corr()
+plt.figure(figsize=(6, 4))
+sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt=".2f", linewidths=0.5)
+plt.title("Heatmap Korelasi Permintaan Keripik Buah")
+plt.show()
+
+
+# Mengatur agar seluruh baris dan kolom ditampilkan
+pd.set_option('display.max_rows', None)  # Menampilkan seluruh baris
+pd.set_option('display.max_columns', None)  # Menampilkan seluruh kolom
+
+# Menampilkan DataFrame setelah penanganan
+print("📌 Data Setelah Penanganan:")
+display(df)
+
+
+#Menyimpan dan Mengunduh Dataset dalam Format CSV
+filename = "Keripik_Buah_Multivariat_Penanganan.csv"
+df.to_csv(filename, index=False)
+files.download(filename)
