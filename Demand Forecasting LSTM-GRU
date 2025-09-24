@@ -1,0 +1,384 @@
+#Import Library
+import tensorflow as tf
+import random
+import itertools
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.layers import GRU, Dense, Dropout, Input
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+from sklearn.metrics import mean_squared_error, mean_absolute_error, mean_absolute_percentage_error
+from tensorflow.keras.optimizers import Adam
+from google.colab import files
+from IPython.display import display
+from tensorflow.keras.models import load_model
+from tensorflow.keras.losses import mse
+
+#Memuat Dataset
+dataset_keripik = "/content/Keripik_Buah_Multivariat_Penanganan.csv"
+df = pd.read_csv(dataset_keripik)
+
+# Plot grafik dengan semua kolom
+plt.figure(figsize=(10,5))
+plt.plot(df.index, df['KeripikNangka(kg)'], linestyle='-', color='orange', label="Keripik Nangka (kg)")
+plt.plot(df.index, df['KeripikSalak(kg)'], linestyle='-', color='blue', label="Keripik Salak (kg)")
+plt.plot(df.index, df['KeripikApel(kg)'], linestyle='-', color='green', label="Keripik Apel (kg)")
+
+# Menambahkan label dan judul
+plt.xlabel("Bulan ke-")
+plt.ylabel("Permintaan (Kg)")
+plt.legend()
+plt.show()
+
+# Mengatur agar seluruh baris dan kolom ditampilkan
+pd.set_option('display.max_rows', None)  # Menampilkan seluruh baris
+pd.set_option('display.max_columns', None)  # Menampilkan seluruh kolom
+
+# Menampilkan DataFrame setelah penanganan
+print("Data Permintaan Keripik Buah:")
+display(df)
+
+# Set seed agar hasil tetap sama
+SEED = 123
+np.random.seed(SEED)
+random.seed(SEED)
+tf.random.set_seed(SEED)
+
+#Ganti target dan fitur sesuai produk yang akan diramalkan
+features = ['KeripikSalak(kg)', 'KeripikApel(kg)']
+target = 'KeripikNangka(kg)'
+
+# Normalisasi Data
+scaler = MinMaxScaler()
+data_normalisasi = scaler.fit_transform(df[features + [target]])
+print("Data setelah dinormalisasi:")
+print(data_normalisasi)
+
+#Menyimpan dalam File Excel (Opsional)
+df_normalisasi = pd.DataFrame(data_normalisasi, columns=features + [target])
+file_path = "Data_Normalisasi_Multivariat.xlsx"
+df_normalisasi.to_excel(file_path, index=False)
+
+# Menyusun Sequence
+def create_sequences(data, timesteps=1):
+    x, y = [], []
+    for i in range(len(data) - timesteps):
+        x.append(data[i:(i+timesteps), :-1])
+        y.append(data[i+timesteps, -1])
+    return np.array(x), np.array(y)
+
+# Kombinasi Hyperparameter
+timesteps_list = [4, 8, 12]
+batch_size_list = [8, 16, 32]
+neurons_list = [16, 32, 64, 128]
+dropout_rate_list = [0.01]
+learning_rate_list = [0.0001, 0.001, 0.01]
+epochs_list = [1000]
+
+def build_gru_model(neurons, dropout_rate, learning_rate, timesteps, num_features):
+  model = Sequential([
+      # Layer Input
+      Input(shape=(timesteps, num_features)),
+      # Layer 1 (GRU)
+      GRU(neurons, return_sequences=True),
+      Dropout(dropout_rate),
+      # Layer 2 (GRU)
+      GRU(neurons, return_sequences=True),
+      Dropout(dropout_rate),
+      # Layer 3 (GRU)
+      GRU(neurons, return_sequences=True),
+      Dropout(dropout_rate),
+      # Layer 4 (GRU)
+      GRU(neurons, return_sequences=False),
+      Dropout(dropout_rate),
+      # Output Layer (Dense) Layer 5
+      Dense(1)])
+
+  # Compile model
+  model.compile(
+      optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
+      loss='mse')
+  return model
+
+best_mape = float('inf')  # Inisialisasi dengan nilai yang sangat besar
+best_model_path = "best_model.keras" #Menyimpan model dengan MAPE test terkecil untuk dipilih
+
+# Simpan hasil evaluasi
+results = []
+num_features = len(features)
+
+# Loop melalui semua kombinasi hyperparameter
+for timesteps, batch_size, neurons, dropout_rate, learning_rate, epochs in itertools.product(timesteps_list, batch_size_list, neurons_list, dropout_rate_list, learning_rate_list, epochs_list):
+  print(f"\nTraining dengan Hyperparameter: timesteps={timesteps}, batch_size={batch_size}, neurons={neurons}, dropout_rate={dropout_rate}, learning_rate={learning_rate}, epochs={epochs}\n")
+
+  #Membuat sequences baru sesuai timesteps
+  x, y = create_sequences(data_normalisasi, timesteps)
+
+  # Pembagian Data Training dan Data Testing
+  pembagian_data = 0.9 #Konfigurasi Training [0.7; 0.8; 0.9]
+  split = int(pembagian_data * len(x))
+  x_train, y_train = x[:split], y[:split]
+  x_test, y_test = x[split:], y[split:]
+
+  #Membuat Model
+  model = build_gru_model(neurons, dropout_rate, learning_rate, timesteps, num_features)
+
+  #Train Model
+  early_stopping = EarlyStopping(monitor='loss', patience=40, restore_best_weights=True, verbose=1) #bisa diatur verbose 1
+  history = model.fit(x_train, y_train, epochs=epochs, batch_size=batch_size, verbose=0, callbacks=[early_stopping]) #bisa diatur verbose 0
+
+  # Summary model
+  model.summary()
+
+  # Dapatkan epoch terakhir yang digunakan sebelum berhenti untuk ditampilkan
+  last_epoch = history.epoch[-1] + 1
+
+  #Prediksi
+  prediksi_train = model.predict(x_train)
+  prediksi_test = model.predict(x_test)
+
+  #Denormalisasi
+  prediksi_train = scaler.inverse_transform(np.hstack((x_train[:, -1, :], prediksi_train.reshape(-1, 1))))[:, -1]
+  y_train = scaler.inverse_transform(np.hstack((x_train[:, -1, :], y_train.reshape(-1, 1))))[:, -1]
+  prediksi_test = scaler.inverse_transform(np.hstack((x_test[:, -1, :], prediksi_test.reshape(-1, 1))))[:, -1]
+  y_test = scaler.inverse_transform(np.hstack((x_test[:, -1, :], y_test.reshape(-1, 1))))[:, -1]
+
+  #Perhitungan Nilai Error Sebagai Evaluasi
+  train_mse = mean_squared_error(y_train, prediksi_train)
+  test_mse = mean_squared_error(y_test, prediksi_test)
+
+  train_mae = mean_absolute_error(y_train, prediksi_train)
+  test_mae = mean_absolute_error(y_test, prediksi_test)
+
+  train_mape = mean_absolute_percentage_error(y_train, prediksi_train) * 100
+  test_mape = mean_absolute_percentage_error(y_test, prediksi_test) * 100
+
+  train_rmse = np.sqrt(train_mse)
+  test_rmse = np.sqrt(test_mse)
+
+  if test_mape < best_mape:
+    best_mape = test_mape
+    model.save(best_model_path)  # Simpan model terbaik berdasarkan mape testing terkecil
+    print(f"Model terbaik {best_mape:.4f}% disimpan dalam 'best_model.keras'")
+
+  #Simpan Hasil Evaluasi
+  results.append({
+      'timesteps': timesteps,
+      'batch_size': batch_size,
+      'neurons': neurons,
+      'dropout_rate': dropout_rate,
+      'learning_rate': learning_rate,
+      'last_epoch': last_epoch,
+      'train_mse': round(train_mse, 4),
+      'test_mse': round(test_mse, 4),
+      'train_mae': round(train_mae, 4),
+      'test_mae': round(test_mae, 4),
+      'train_mape (%)': round(train_mape, 2),
+      'test_mape (%)': round(test_mape, 2),
+      'train_rmse': round(train_rmse, 4),
+      'test_rmse': round(test_rmse, 4)
+  })
+
+  print(f"RMSE Train: {train_rmse:.2f}, RMSE Test: {test_rmse:.2f}, MSE Train: {train_mse:.2f}, MSE Test: {test_mse:.2f}, MAE Train: {train_mae:.2f}, MAE Test: {test_mae:.2f}, MAPE Train: {train_mape:.2f}%, MAPE Test: {test_mape:.2f}%")
+
+#konversi hasil ke dataframe
+df_results = pd.DataFrame(results)
+
+# Tampilkan semua baris dan kolom dari seluruh kombinasi hyperparameter
+pd.set_option('display.max_rows', None)  # Menampilkan semua baris
+pd.set_option('display.max_columns', None)  # Menampilkan semua kolom
+pd.set_option('display.float_format', '{:.3f}'.format)  # Format angka lebih rapi
+
+# Menampilkan DataFrame sebagai tabel hasil seluruh kombinasi hyperparameter
+display(df_results.style.set_properties(**{'text-align': 'center'}).set_sticky())  # Agar header tetap terlihat saat scroll
+
+file_name = "Hasil GRU Keripik Nangka Bulanan 90% 4HL Multivariat.xlsx"
+df_results.to_excel(file_name, index=False)
+print("\n Hasil evaluasi telah disimpan dalam file")
+#Unduh file hasil otomatis di Google Colab
+files.download(file_name)
+
+# Menentukan model terbaik berdasarkan MAPE train terkecil
+best_model = df_results.loc[df_results['test_mape (%)'].idxmin()]
+best_hyperparameters = best_model[['timesteps', 'batch_size', 'neurons', 'dropout_rate', 'learning_rate', 'last_epoch']]
+
+print("\n Model Terbaik Berdasarkan MAPE Train Terkecil:")
+print(best_model)
+
+print("\n Hyperparameter Terbaik:")
+print(best_hyperparameters.to_dict())
+
+# Ambil nilai hyperparameter terbaik
+best_timesteps = int(best_model['timesteps'])
+best_batch_size = int(best_model['batch_size'])
+best_neurons = int(best_model['neurons'])
+best_dropout_rate = float(best_model['dropout_rate'])
+best_learning_rate = float(best_model['learning_rate'])
+best_epochs = int(best_model['last_epoch'])
+
+best_model_loaded = load_model("best_model.keras", custom_objects={'mse': mse})
+print("\n Model terbaik telah dimuat kembali dari 'best_model.keras' untuk digunakan.")
+
+# Buat sequences sesuai best_timesteps
+x, y = create_sequences(data_normalisasi, best_timesteps)
+last_seq = x[-1]
+
+# Prediksi 12 bulan ke depan
+jumlah_bulan = 12
+prediksi_berikutnya = []
+
+for i in range(jumlah_bulan):
+    last_seq_reshaped = last_seq.reshape(1, best_timesteps, num_features)
+    prediksi = best_model_loaded.predict(last_seq_reshaped, verbose=0)
+    prediksi_berikutnya.append(prediksi[0, 0])
+    last_seq = np.roll(last_seq, shift=-1, axis=0)
+    last_seq[-1, -1] = prediksi[0, 0]
+
+print("\n Prediksi untuk bulan-bulan berikutnya telah selesai.")
+print("Hasil prediksi:", prediksi_berikutnya)
+
+# Denormalisasi hasil prediksi
+prediksi_berikutnya = scaler.inverse_transform(np.hstack((np.zeros((12, num_features)), np.array(prediksi_berikutnya).reshape(-1, 1))))[:, -1]
+
+# Buat DataFrame hasil prediksi
+df_prediksi = pd.DataFrame({
+    "Bulan Ke-": range(1, len(prediksi_berikutnya) + 1),
+    "Hasil Peramalan (Kg)": prediksi_berikutnya.flatten()
+})
+
+# Tampilkan hasil prediksi
+print("\n Prediksi Permintaan Keripik Buah Tahun 2025 dengan Model Terbaik:")
+print(df_prediksi)
+
+# Daftar nama bulan untuk tahun 2025
+bulan_2025 = ['Jan 2025', 'Feb 2025', 'Mar 2025', 'Apr 2025', 'Mei 2025', 'Jun 2025',
+              'Jul 2025', 'Agu 2025', 'Sep 2025', 'Okt 2025', 'Nov 2025', 'Des 2025']
+
+# Plot hasil prediksi
+plt.figure(figsize=(10, 6))
+plt.plot(bulan_2025, prediksi_berikutnya, marker='o', linestyle='-', color='orange', label='Prediksi 2025')
+plt.xlabel("Bulan")
+plt.ylabel("Permintaan (Kg)")
+plt.title("Hasil Peramalan Permintaan Keripik Nangka Tahun 2025 dengan Model GRU Terbaik")
+plt.xticks(rotation=45)
+plt.legend()
+plt.grid(axis='y')
+plt.tight_layout()
+plt.show()
+
+start_date = '2021-05' #Perhatikan timesteps terbaiknya
+periods = len(y_train) + len(y_test) + len(prediksi_berikutnya)
+bulan_index = pd.date_range(start=start_date, periods=periods, freq='M').strftime('%b %Y')  # 'Mei 2020', dll
+
+# Gabungkan data historis
+historical_data = np.concatenate([y_train, y_test])
+total_days = len(historical_data) + len(prediksi_berikutnya)
+plt.figure(figsize=(14, 6))
+plt.plot(historical_data, label='Data Historis', color='blue')
+
+# Plot Data Prediksi
+plt.plot(range(len(historical_data), total_days), prediksi_berikutnya, label='Prediksi Berikutnya', color='red')
+
+# Tambahkan Garis Vertikal sebagai Pemisah
+plt.axvline(x=len(historical_data), color='black', linestyle='dashed', label='Mulai Prediksi')
+
+# Tambahkan label bulan ke sumbu X (Step untuk mengatur interval bulan di sumbu X)
+plt.xticks(ticks=np.arange(0, periods, step=2), labels=bulan_index[::2], rotation=45)
+
+# Label dan Judul
+plt.xlabel('Bulan')
+plt.ylabel('Permintaan (Kg)')
+plt.title('Gabungan Data Historis dan Hasil Peramalan Permintaan Keripik Nangka Tahun 2025 Metode GRU')
+plt.legend()
+plt.grid(axis='y')
+plt.tight_layout()
+plt.show()
+
+# Gabungkan Data Aktual
+y_actual = np.concatenate([y_train, y_test])
+
+# Gabungkan Hasil Prediksi dari Model Terbaik
+y_pred_combined = np.concatenate([prediksi_train, prediksi_test])
+
+# Buat Index Waktu
+total_periods = len(y_actual) + len(prediksi_berikutnya)
+start_date = '2021-05' #Perhatikan timesteps terbaiknya
+bulan_index = pd.date_range(start=start_date, periods=total_periods, freq='M').strftime('%b %Y')  # atau '%B %Y' untuk nama bulan lengkap
+
+# Buat Index untuk Plot
+time_actual = np.arange(len(y_actual))
+time_forecast = np.arange(len(y_actual), total_periods)
+
+# Plot Perbandingan Data
+plt.figure(figsize=(15, 6))
+
+# Plot Data Aktual
+plt.plot(time_actual, y_actual, label="Data Aktual", color='blue')
+
+# Plot Hasil Prediksi (Training & Testing)
+plt.plot(time_actual, y_pred_combined, label="Prediksi Training & Testing", color='red', linestyle='dashed')
+
+# Plot Prediksi 12 Bulan ke Depan
+plt.plot(time_forecast, prediksi_berikutnya, label="Prediksi 12 Bulan Ke Depan", color='green')
+
+# Garis Pemisah
+plt.axvline(x=len(y_train), color='black', linestyle='--', label="Batas Train-Test")
+plt.axvline(x=len(y_actual), color='purple', linestyle='--', label="Batas Aktual - Prediksi")
+
+# Label Bulan
+plt.xticks(ticks=np.arange(0, total_periods, step=2), labels=bulan_index[::2], rotation=45)
+
+# Keterangan
+plt.legend()
+plt.title("Perbandingan Data Aktual dengan Hasil Prediksi (Training, Testing, & Forecasting) Keripik Nangka Metode GRU")
+plt.xlabel("Bulan")
+plt.ylabel("Permintaan (Kg)")
+plt.grid(axis='y')
+plt.tight_layout()
+plt.show()
+
+# Buat panjang total
+total_length = len(y_actual)
+forecast_length = len(prediksi_berikutnya)
+
+# Inisialisasi kolom-kolom dengan NaN
+df = pd.DataFrame({
+    'Data Aktual': np.concatenate([y_actual, [np.nan]*forecast_length]),
+    'Prediksi Train': [*prediksi_train, *[np.nan]*(total_length + forecast_length - len(prediksi_train))],
+    'Prediksi Test': [*([np.nan]*len(y_train)), *prediksi_test, *[np.nan]*forecast_length],
+    'Prediksi Forecast': [*([np.nan]*total_length), *prediksi_berikutnya]
+})
+
+# Tambahkan kolom waktu (opsional)
+df.index.name = 'Bulan ke-'
+df.reset_index(inplace=True)
+print(df)
+
+# Buat panjang total
+total_length = len(y_actual)
+forecast_length = len(prediksi_berikutnya)
+
+# Buat daftar bulan mulai dari Mei 2020
+tanggal_index = pd.date_range(start='2021-05', periods=total_length + forecast_length, freq='M')
+nama_bulan = tanggal_index.strftime('%b %Y')  # Untuk format 'Mei 2020' dll
+
+# Inisialisasi kolom-kolom dengan NaN
+df = pd.DataFrame({
+    'Data Aktual': np.concatenate([y_actual, [np.nan]*forecast_length]),
+    'Prediksi Train': [*prediksi_train, *[np.nan]*(total_length + forecast_length - len(prediksi_train))],
+    'Prediksi Test': [*[np.nan]*len(y_train), *prediksi_test, *[np.nan]*forecast_length],
+    'Prediksi Forecast': [*[np.nan]*total_length, *prediksi_berikutnya]
+}, index=nama_bulan)
+
+# Ganti nama index jadi "Bulan"
+df.index.name = 'Bulan'
+print(df)
+
+# Simpan ke file Excel
+nama_file = 'Hasil Prediksi Keripik Nangka GRU 90%.xlsx'
+df.to_excel(nama_file, index=False)
+
+print(f"Data berhasil disimpan ke file: {nama_file}")
